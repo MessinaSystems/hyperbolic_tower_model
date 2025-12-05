@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hyperbolic Bamboo with Native Babylon.GUI Sliders</title>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        #renderCanvas { width: 100%; height: 100%; touch-action: none; }
+    </style>
+</head>
+<body>
+<canvas id="renderCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById("renderCanvas");
+    const engine = new BABYLON.Engine(canvas, true);
+
+    const createScene = function () {
+        const scene = new BABYLON.Scene(engine);
+
+        // Camera
+        const camera = new BABYLON.ArcRotateCamera("cam", -Math.PI / 2, Math.PI / 2.5, 15, new BABYLON.Vector3(0, 3, 0));
+        camera.attachControl(canvas, true);
+
+        // Light
+        new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
+
+        // Material
+        const bambooMat = new BABYLON.StandardMaterial("bamboo", scene);
+        bambooMat.diffuseColor = new BABYLON.Color3(208/255, 168/255, 98/255);
+
+        // Top ring 
+        var ring = BABYLON.MeshBuilder.CreateTorus("ring", { diameter: 4, thickness: 0.1 }, scene);
+        ring.position.y = 6;
+        ring.material = bambooMat;
+
+        // Store poles so we can dispose them later
+        let poles = [];
+
+        // Pole path generator
+        function createHyperbolicPolePaths(config) {
+            const { baseRadius = 2.5, topRadius = 2.0, height = 6.0, polesPerDirection = 12, rotationDegrees = 4 } = config;
+            const n = polesPerDirection;
+            const rot = rotationDegrees;
+            const h = height;
+            const spacingDeg = 360 / n;
+            const degToRad = d => d * Math.PI / 180;
+            const paths = [];
+
+            for (let i = 0; i < n; i++) {
+                const j = (i + rot) % n;
+                const baseX = baseRadius * Math.cos(degToRad(i * spacingDeg));
+                const baseZ = baseRadius * Math.sin(degToRad(i * spacingDeg));
+                const topX = topRadius * Math.cos(degToRad(j * spacingDeg));
+                const topZ = topRadius * Math.sin(degToRad(j * spacingDeg));
+
+                paths.push([
+                    new BABYLON.Vector3(baseX, 0, baseZ),
+                    new BABYLON.Vector3(topX, h, topZ)
+                ]);
+            }
+
+            for (let i = 0; i < n; i++) {
+                const j = (i - rot + n) % n;
+                const baseX = baseRadius * Math.cos(degToRad(i * spacingDeg));
+                const baseZ = baseRadius * Math.sin(degToRad(i * spacingDeg));
+                const topX = topRadius * Math.cos(degToRad(j * spacingDeg));
+                const topZ = topRadius * Math.sin(degToRad(j * spacingDeg));
+
+                paths.push([
+                    new BABYLON.Vector3(baseX, 0, baseZ),
+                    new BABYLON.Vector3(topX, h, topZ)
+                ]);
+            }
+            return paths;
+        }
+
+        // Rebuild poles
+        function rebuildPoles(params) {
+            // Remove old poles
+            poles.forEach(p => p.dispose());
+            poles.length = 0;
+
+            const paths = createHyperbolicPolePaths(params);
+
+            paths.forEach((path, i) => {
+                const pole = BABYLON.MeshBuilder.CreateTube(`pole_${i}`, {
+                    path: path,
+                    radius: 0.05,
+                    cap: BABYLON.Mesh.CAP_ALL
+                }, scene);
+                pole.material = bambooMat;
+                poles.push(pole);
+            });
+
+            // update ring
+            if (ring) ring.dispose();
+            ring = BABYLON.MeshBuilder.CreateTorus("ring", {
+               diameter: params.topRadius * 2,
+              thickness: 0.1
+            }, scene);
+            ring.position.y = params.height;
+
+            // Changes all materials at once
+            scene.meshes.forEach(m => m.material = bambooMat);
+
+        }
+
+        // === NATIVE BABYLON.GUI ===
+        const advancedTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI", true);
+
+        const panel = new BABYLON.GUI.StackPanel();
+        panel.width = "300px";
+        panel.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+        panel.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+        panel.paddingTop = "20px";
+        panel.paddingLeft = "20px";
+        panel.background = "rgba(30,30,50,0.7)";
+        panel.cornerRadius = 10;
+        advancedTexture.addControl(panel);
+
+        const createSlider = (name, min, max, value, step = 0.1) => {
+            const header = new BABYLON.GUI.TextBlock();
+            header.text = `${name}: ${value}`;
+            header.height = "40px";
+            header.color = "white";
+            header.fontSize = 18;
+            header.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+            panel.addControl(header);
+
+            const slider = new BABYLON.GUI.Slider();
+            slider.minimum = min;
+            slider.maximum = max;
+            slider.value = value;
+            slider.step = step;
+            slider.height = "20px";
+            slider.width = "260px";
+            slider.color = "#4CAF50";
+            slider.background = "grey";
+            slider.thumbWidth = "20px";
+            slider.isThumbCircle = true;
+            panel.addControl(slider);
+
+            // Link slider → text + rebuild
+            slider.onValueChangedObservable.add((v) => {
+                const displayValue = Number.isInteger(v) ? v : v.toFixed(1);
+                header.text = `${name}: ${displayValue}`;
+                rebuildPoles({
+                    baseRadius: sliders.baseRadius.value,
+                    topRadius: sliders.topRadius.value,
+                    height: sliders.height.value,
+                    polesPerDirection: Math.round(sliders.polesPerDirection.value),
+                    rotationDegrees: Math.round(sliders.rotationDegrees.value)
+                });
+            });
+
+            return slider;
+        };
+
+        const sliders = {
+            baseRadius: createSlider("Base Radius (m)", 0.5, 5.0, 2.5, 0.1),
+            topRadius: createSlider("Top Radius (m)", 0.5, 5.0, 2.0, 0.1),
+            height: createSlider("Height (m)", 1.0, 12.0, 6.0, 0.1),
+            polesPerDirection: createSlider("Poles per Direction", 4, 30, 12, 1),
+            rotationDegrees: createSlider("Rotation", 0, 8, 4, 1)
+        };
+
+        // Initial build
+        rebuildPoles({
+            baseRadius: 2.5,
+            topRadius: 2.0,
+            height: 6.0,
+            polesPerDirection: 12,
+            rotationDegrees: 4
+        });
+
+        return scene;
+    };
+
+    const scene = createScene();
+
+    engine.runRenderLoop(() => {
+        scene.render();
+    });
+
+    window.addEventListener("resize", () => {
+        engine.resize();
+    });
+</script>
+</body>
+</html>
